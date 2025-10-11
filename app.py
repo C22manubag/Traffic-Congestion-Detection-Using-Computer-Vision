@@ -1,3 +1,16 @@
+import streamlit as st
+from ultralytics import YOLO
+import cv2
+import numpy as np
+from PIL import Image
+import tempfile
+from collections import deque
+
+# Streamlit configuration
+st.set_page_config(page_title="Smart Traffic Flow Analyzer", layout="centered")
+
+st.title("🚦 Traffic Congestion Detection Using Computer Vision  ")
+st.write("Analyzes road congestion using computer vision — detects if the road has traffic or free flow conditions.")
 import os, requests
 
 MODEL_PATH = "yolov8s.pt"
@@ -13,22 +26,6 @@ def ensure_model():
 
 # Call this after st.set_page_config() and st.title()
 ensure_model()
-
-
-
-import streamlit as st
-from ultralytics import YOLO
-import cv2
-import numpy as np
-from PIL import Image
-import tempfile
-from collections import deque
-
-# Streamlit configuration
-st.set_page_config(page_title="Smart Traffic Flow Analyzer", layout="centered")
-
-st.title("🚦 Traffic Congestion Detection Using Computer Vision  ")
-st.write("Analyzes road congestion using computer vision — detects if the road has traffic or free flow conditions.")
 
 # Load YOLO model
 @st.cache_resource
@@ -125,4 +122,5 @@ elif option == "🎞️ Upload Video":
 
         cap.release()
         st.success(f"Final Estimated Condition: {traffic_status}")
+
 
