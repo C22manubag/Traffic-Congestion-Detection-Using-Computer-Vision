@@ -1,12 +1,19 @@
 import os, requests
 
-# Automatically download YOLOv8s if missing
 MODEL_PATH = "yolov8s.pt"
-if not os.path.exists(MODEL_PATH):
-    st.warning("Model not found — downloading YOLOv8s.pt, please wait...")
-    url = "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt"
-    with open(MODEL_PATH, "wb") as f:
-        f.write(requests.get(url).content)
+
+def ensure_model():
+    if not os.path.exists(MODEL_PATH):
+        # show this inside the Streamlit app, not at import time
+        st.info("Downloading YOLOv8s model... please wait ⏳")
+        url = "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt"
+        with open(MODEL_PATH, "wb") as f:
+            f.write(requests.get(url).content)
+        st.success("✅ Model downloaded successfully!")
+
+# Call this after st.set_page_config() and st.title()
+ensure_model()
+
 
 
 import streamlit as st
@@ -118,3 +125,4 @@ elif option == "🎞️ Upload Video":
 
         cap.release()
         st.success(f"Final Estimated Condition: {traffic_status}")
+
