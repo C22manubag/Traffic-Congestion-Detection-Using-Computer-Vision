@@ -1,12 +1,9 @@
-import streamlit as st
-from ultralytics import YOLO
-import cv2
-import numpy as np
-from PIL import Image
-import tempfile
-from collections import deque
-import os
-import requests
-import plotly.graph_objects as go
-
-
+streamlit>=1.38.0
+ultralytics>=8.2.0
+torch==2.2.2
+torchvision==0.17.2
+opencv-python-headless==4.9.0.80
+pillow>=10.4.0
+numpy>=1.26.4
+requests>=2.31.0
+plotly>=5.20.0
