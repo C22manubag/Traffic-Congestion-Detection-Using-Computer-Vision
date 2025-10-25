@@ -1,160 +1,114 @@
 import streamlit as st
 import cv2
-import numpy as np
 import tempfile
-import time
-import plotly.graph_objects as go
 from ultralytics import YOLO
-import torch
+import numpy as np
+import time
 
-# ------------------------------------------------------------
-# PAGE CONFIG
-# ------------------------------------------------------------
-st.set_page_config(page_title="🚦 Traffic Flow Intelligence", layout="centered")
-st.title("🚗 Traffic Flow Intelligence using YOLO + Motion Detection")
-st.caption("Analyzes vehicle movement, confidence rate, and congestion level in uploaded traffic videos.")
+st.set_page_config(page_title="Traffic Flow Analyzer", layout="wide")
+st.title("🚗 Traffic Congestion Detection using YOLOv8")
 
-# ------------------------------------------------------------
-# UPLOAD VIDEO
-# ------------------------------------------------------------
-uploaded_video = st.file_uploader("📹 Upload a Traffic Video", type=["mp4", "mov", "avi", "mkv"])
+st.write("Upload a traffic video to analyze flow, detect vehicles, and determine if the scene is **Traffic** or **Free Flow.**")
 
-if uploaded_video is not None:
-    # Save temp
+uploaded_file = st.file_uploader("📤 Upload a Video", type=["mp4", "mov", "avi", "mkv"])
+
+if uploaded_file is not None:
+    # Save the uploaded video temporarily
     tfile = tempfile.NamedTemporaryFile(delete=False)
-    tfile.write(uploaded_video.read())
-    st.video(tfile.name)
-    st.info("⏳ Initializing YOLOv8 model... Please wait.")
+    tfile.write(uploaded_file.read())
+    video_path = tfile.name
 
     # Load YOLOv8 model
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = YOLO("yolov8n.pt").to(device)
-    st.success("✅ Model loaded successfully.")
+    model = YOLO("yolov8n.pt")
 
-    # ------------------------------------------------------------
-    # VIDEO PROCESSING
-    # ------------------------------------------------------------
-    cap = cv2.VideoCapture(tfile.name)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    frame_interval = int(fps / 2)
+    cap = cv2.VideoCapture(video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+    frame_interval = max(1, fps // 3)
+
+    moving_objects = 0
+    stationary_objects = 0
+    all_confidences = []
+    total_objects_detected = 0
+    prev_positions = {}
+
     progress = st.progress(0)
-    frame_placeholder = st.empty()
-
-    # Motion detection reference
-    ret, prev_frame = cap.read()
-    if not ret:
-        st.error("❌ Could not read video. Try another file.")
-        st.stop()
-    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
-
-    # Tracking data
-    timestamps, vehicle_counts, avg_confidences, motion_scores = [], [], [], []
     start_time = time.time()
-    frame_idx = 0
 
-    while True:
+    # Placeholder for displaying the video
+    stframe = st.empty()
+
+    frame_idx = 0
+    while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
+        # Process every few frames for speed
         if frame_idx % frame_interval == 0:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            diff = cv2.absdiff(prev_gray, gray)
-            motion_score = np.sum(diff > 30) / diff.size * 100
-            motion_scores.append(motion_score)
-            prev_gray = gray
+            results = model(frame, verbose=False)
+            detections = results[0].boxes.data.cpu().numpy()
 
-            # --- YOLO detection ---
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = model.predict(frame_rgb, conf=0.4, verbose=False, device=device)
-            boxes = results[0].boxes
+            frame_objects = 0
+            for det in detections:
+                x1, y1, x2, y2, conf, cls = det[:6]
+                label = model.names[int(cls)]
+                if label in ["car", "bus", "truck", "motorbike", "bicycle"]:
+                    frame_objects += 1
+                    all_confidences.append(float(conf))
+                    total_objects_detected += 1
+                    cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
 
-            vehicle_count, total_conf = 0, 0.0
-            vehicle_labels = ["car", "bus", "truck", "motorbike", "jeep"]
+                    prev = prev_positions.get(label, (cx, cy))
+                    movement = np.linalg.norm(np.array([cx, cy]) - np.array(prev))
+                    prev_positions[label] = (cx, cy)
 
-            for box in boxes:
-                cls = int(box.cls[0])
-                label = model.names.get(cls, "obj")
-                conf = float(box.conf[0])
-                if label in vehicle_labels:
-                    vehicle_count += 1
-                    total_conf += conf
-                    (x1, y1, x2, y2) = map(int, box.xyxy[0])
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(frame, f"{label} {conf:.2f}", (x1, y1 - 4),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                    if movement > 5:
+                        moving_objects += 1
+                    else:
+                        stationary_objects += 1
 
-            avg_conf = total_conf / max(1, vehicle_count)
-            avg_confidences.append(avg_conf)
-            vehicle_counts.append(vehicle_count)
-            timestamps.append(time.time() - start_time)
+                    cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 2)
+                    cv2.putText(frame, f"{label} {conf:.2f}", (int(x1), int(y1)-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
 
-            # --- Traffic Classification Logic ---
-            if vehicle_count == 0:
-                status = "🟢 Free Flow"
-                color = (0, 255, 0)
-            elif motion_score < 5 and vehicle_count > 5:
-                status = "🔴 Traffic"
-                color = (0, 0, 255)
-            elif motion_score < 15:
-                status = "🟡 Slow Flow"
-                color = (0, 255, 255)
-            else:
-                status = "🟢 Free Flow"
-                color = (0, 255, 0)
-
-            # --- Realness Metric ---
-            realness = np.clip((avg_conf * 50 + motion_score) / 1.5, 0, 100)
-
-            text = f"{status} | Vehicles: {vehicle_count} | Motion: {motion_score:.1f}% | Conf: {avg_conf:.2f} | Realness: {realness:.1f}%"
-            cv2.putText(frame, text, (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-            resized = cv2.resize(frame, (480, 360))
-            frame_placeholder.image(resized, channels="BGR", use_container_width=False)
-            progress.progress(frame_idx / total_frames)
+            # Update video preview
+            stframe.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), channels="RGB")
 
         frame_idx += 1
+        progress.progress(min(frame_idx / total_frames, 1.0))
 
     cap.release()
-    progress.empty()
-    st.success("✅ Video Analysis Complete!")
+    end_time = time.time()
+    duration = end_time - start_time
 
-    # ------------------------------------------------------------
-    # SUMMARY
-    # ------------------------------------------------------------
-    st.subheader("📊 Summary Report")
+    # --- Analysis Section ---
+    st.subheader("📊 Traffic Analysis Summary")
 
-    avg_vehicle = np.mean(vehicle_counts) if vehicle_counts else 0
-    avg_motion = np.mean(motion_scores) if motion_scores else 0
-    avg_conf = np.mean(avg_confidences) if avg_confidences else 0
+    avg_conf = np.mean(all_confidences) if all_confidences else 0
+    total_movement = moving_objects + stationary_objects
+    movement_ratio = moving_objects / total_movement if total_movement > 0 else 0
 
-    if avg_motion < 8:
-        overall_status = "🔴 Heavy Traffic"
-    elif avg_motion < 20:
-        overall_status = "🟡 Moderate Flow"
+    # Determine traffic status
+    if movement_ratio < 0.4:
+        status = "🚨 Traffic"
+        traffic_closeness = round((1 - movement_ratio) * 100, 2)
+        freeflow_closeness = 100 - traffic_closeness
     else:
-        overall_status = "🟢 Free Flow"
+        status = "✅ Free Flow"
+        freeflow_closeness = round(movement_ratio * 100, 2)
+        traffic_closeness = 100 - freeflow_closeness
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Avg Vehicles", f"{avg_vehicle:.1f}")
-    col2.metric("Avg Motion (%)", f"{avg_motion:.1f}")
-    col3.metric("Avg Confidence", f"{avg_conf:.2f}")
-    col4.metric("Overall Status", overall_status)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("🧾 Total Vehicles Detected", total_objects_detected)
+    col2.metric("🚗 Moving Vehicles", moving_objects)
+    col3.metric("🚙 Stationary Vehicles", stationary_objects)
 
-    # ------------------------------------------------------------
-    # PLOTS
-    # ------------------------------------------------------------
-    if timestamps:
-        fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=timestamps, y=vehicle_counts, mode="lines+markers", name="Vehicles"))
-        fig1.add_trace(go.Scatter(x=timestamps, y=motion_scores, mode="lines+markers", name="Motion %"))
-        fig1.update_layout(title="🚦 Vehicle Count & Motion Over Time", xaxis_title="Time (s)", height=350)
-        st.plotly_chart(fig1, use_container_width=True)
-
-        fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(x=timestamps, y=avg_confidences, mode="lines+markers", name="Confidence"))
-        fig2.update_layout(title="🧠 Confidence Rate Over Time", xaxis_title="Time (s)", yaxis_title="Confidence", height=350)
-        st.plotly_chart(fig2, use_container_width=True)
+    st.write(f"**Overall Confidence Level:** {avg_conf*100:.2f}%")
+    st.write(f"**Traffic Closeness:** {traffic_closeness:.2f}%")
+    st.write(f"**Free Flow Closeness:** {freeflow_closeness:.2f}%")
+    st.write(f"**Analysis Duration:** {duration:.2f} seconds")
+    st.success(f"### Final Result: {status}")
 
 else:
-    st.info("📂 Upload a traffic video to start analysis.")
+    st.info("👆 Please upload a video file to start the analysis.")
