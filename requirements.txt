@@ -5,6 +5,5 @@ torchvision==0.17.2
 opencv-python-headless==4.9.0.80
 pillow>=10.4.0
 numpy<2.0
-requests>=2.31.0
 plotly>=5.20.0
 lapx>=0.5.6
