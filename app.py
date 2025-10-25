@@ -8,46 +8,45 @@ import tempfile
 import time
 from collections import deque
 
-# -----------------------------------------------
+# --------------------------------------------------
 # PAGE CONFIGURATION
-# -----------------------------------------------
+# --------------------------------------------------
 st.set_page_config(page_title="🚦 Traffic Flow Analyzer", layout="wide")
 st.title("🚦 Smart Traffic Flow Analyzer")
-st.caption("Detect and analyze vehicle traffic from webcam or uploaded video using YOLOv8.")
+st.caption("Detect and analyze vehicle traffic using YOLOv8 in real-time or via video upload.")
 
-# -----------------------------------------------
+# --------------------------------------------------
 # LOAD YOLO MODEL
-# -----------------------------------------------
+# --------------------------------------------------
 @st.cache_resource
 def load_model():
     return YOLO("yolov8s.pt")
 
 model = load_model()
 
-# -----------------------------------------------
-# CONFIGURATION PANEL
-# -----------------------------------------------
+# --------------------------------------------------
+# SIDEBAR SETTINGS
+# --------------------------------------------------
 with st.sidebar:
     st.header("⚙️ Detection Settings")
     conf_threshold = st.slider("Confidence Threshold", 0.2, 0.9, 0.5, 0.05)
-    st.info("Using YOLOv8s pretrained model on COCO dataset.")
-    st.caption("Detects: car, motorcycle, bus, truck")
     mode = st.radio("Select Input Mode", ["📹 Upload Video", "📷 Webcam Capture"])
+    st.info("YOLOv8s pretrained model on COCO dataset — detects car, motorcycle, bus, truck.")
 
 vehicle_classes = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
-# -----------------------------------------------
+# --------------------------------------------------
 # BUFFERS FOR ANALYSIS
-# -----------------------------------------------
+# --------------------------------------------------
 confidences = deque(maxlen=30)
 ratios = deque(maxlen=30)
 vehicle_counts = deque(maxlen=30)
 motions = deque(maxlen=30)
 prev_positions = {}
 
-# -----------------------------------------------
+# --------------------------------------------------
 # ANALYSIS FUNCTION
-# -----------------------------------------------
+# --------------------------------------------------
 def analyze_flow(frame):
     global prev_positions
     results = model.track(frame, conf=conf_threshold, persist=True, verbose=False, classes=list(vehicle_classes.keys()))
@@ -88,7 +87,7 @@ def analyze_flow(frame):
     avg_ratio = np.mean(ratios)
     avg_motion = np.mean(motions)
 
-    # Determine Traffic Flow (Free Flow or Traffic)
+    # Determine Traffic Flow
     if avg_motion > 5 and avg_ratio < 0.12:
         status, color = "🟢 Free Flow", (0, 255, 0)
         closeness = min(100, (avg_motion / 5) * 100)
@@ -110,44 +109,58 @@ def analyze_flow(frame):
     return annotated, status, avg_conf, avg_ratio * 100, vehicle_count, avg_motion, closeness
 
 
-# -----------------------------------------------
-# MAIN APP FLOW
-# -----------------------------------------------
-main_col, analytics_col = st.columns([3, 1])
+# --------------------------------------------------
+# MAIN INTERFACE
+# --------------------------------------------------
+st.subheader("🎛 Select Input Mode")
+st.write("Choose a method to analyze traffic:")
 
+col1, col2 = st.columns([3, 1])
+results_placeholder = st.empty()
+stats_placeholder = st.empty()
+
+# --------------------------------------------------
+# WEBCAM MODE
+# --------------------------------------------------
 if mode == "📷 Webcam Capture":
-    st.markdown("### 🎥 Webcam Detection")
-    camera_image = st.camera_input("Capture a frame for analysis")
-    if camera_image is not None:
-        img = Image.open(camera_image)
+    camera_feed = st.camera_input("Capture a Frame for Analysis")
+
+    if camera_feed is not None:
+        img = Image.open(camera_feed)
         frame = np.array(img)
         annotated, status, conf, ratio, count, motion, closeness = analyze_flow(frame)
 
-        with main_col:
+        with col1:
             st.image(annotated, use_column_width=True)
 
-        with analytics_col:
-            st.metric("Traffic Status", status)
-            st.metric("Confidence (avg)", f"{conf*100:.2f}%")
-            st.metric("Vehicle Count", int(count))
-            st.metric("Area (%)", f"{ratio:.2f}")
-            st.metric("Motion", f"{motion:.2f}")
-            st.metric("Closeness to Real Flow", f"{closeness:.1f}%")
+        results_placeholder.markdown(f"### Current Result: {status}")
+        stats_placeholder.write(
+            f"**Confidence:** {conf*100:.2f}% | **Vehicle Count:** {count} | **Motion:** {motion:.2f} | **Closeness:** {closeness:.1f}%"
+        )
 
+        if st.button("📊 Generate Full Statistics"):
+            st.subheader("📈 Summary Statistics")
+            st.metric("Traffic Status", status)
+            st.metric("Average Confidence", f"{np.mean(confidences)*100:.2f}%")
+            st.metric("Average Flow Closeness", f"{np.mean(closeness):.1f}%")
+            st.metric("Vehicle Count", int(np.mean(vehicle_counts)))
+
+
+# --------------------------------------------------
+# VIDEO UPLOAD MODE
+# --------------------------------------------------
 else:
-    st.markdown("### 📹 Upload a Video File")
-    uploaded_video = st.file_uploader("Upload a traffic video (mp4, mov, avi)", type=["mp4", "mov", "avi"])
+    uploaded_video = st.file_uploader("📹 Upload a traffic video (mp4, mov, avi)", type=["mp4", "mov", "avi"])
 
     if uploaded_video is not None:
         tfile = tempfile.NamedTemporaryFile(delete=False)
         tfile.write(uploaded_video.read())
         cap = cv2.VideoCapture(tfile.name)
 
-        frame_placeholder = main_col.empty()
+        frame_placeholder = col1.empty()
         progress = st.progress(0)
         start_time = time.time()
         timeline, conf_data, closeness_data = [], [], []
-
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         processed_frames = 0
 
@@ -168,10 +181,13 @@ else:
         cap.release()
         progress.empty()
 
-        with analytics_col:
-            st.metric("Final Status", status)
-            st.metric("Average Confidence", f"{np.mean(conf_data)*100:.2f}%")
-            st.metric("Flow Accuracy", f"{np.mean(closeness_data):.1f}%")
+        results_placeholder.markdown(f"### Final Result: {status}")
+
+        if st.button("📊 Generate Full Statistics"):
+            st.subheader("📈 Statistical Summary")
+            col2.metric("Final Status", status)
+            col2.metric("Average Confidence", f"{np.mean(conf_data)*100:.2f}%")
+            col2.metric("Average Flow Closeness", f"{np.mean(closeness_data):.1f}%")
 
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=timeline, y=conf_data, mode="lines", name="Confidence"))
@@ -180,7 +196,7 @@ else:
                 title="📊 Confidence & Flow Closeness Over Time",
                 xaxis_title="Time (s)",
                 yaxis_title="Value",
-                height=300,
+                height=350,
                 showlegend=True,
             )
             st.plotly_chart(fig, use_container_width=True)
