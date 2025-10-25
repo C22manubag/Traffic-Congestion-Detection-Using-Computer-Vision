@@ -3,49 +3,48 @@ from ultralytics import YOLO
 import numpy as np
 import cv2
 from PIL import Image
-import time
 from collections import deque
-import plotly.graph_objects as go
 
-# -----------------------------------------------
+# ---------------------------------------------------
 # PAGE CONFIGURATION
-# -----------------------------------------------
-st.set_page_config(page_title="🚦 Live Traffic Monitor", layout="wide")
+# ---------------------------------------------------
+st.set_page_config(page_title="🚦 Smart Live Traffic Flow Analyzer", layout="wide")
 st.title("🚦 Smart Live Traffic Flow Analyzer")
-st.caption("Analyze real-time vehicle traffic using your browser webcam feed.")
+st.caption("Analyze real-time vehicle traffic directly from your browser webcam feed.")
 
-# -----------------------------------------------
-# MODEL LOADING
-# -----------------------------------------------
+# ---------------------------------------------------
+# LOAD YOLO MODEL
+# ---------------------------------------------------
 @st.cache_resource
 def load_model():
+    # Automatically downloads if not present
     return YOLO("yolov8s.pt")
 
 model = load_model()
 
-# -----------------------------------------------
-# CONFIGURATION PANEL
-# -----------------------------------------------
+# ---------------------------------------------------
+# SIDEBAR CONFIGURATION
+# ---------------------------------------------------
 with st.sidebar:
     st.header("⚙️ Detection Settings")
     conf_threshold = st.slider("Confidence Threshold", 0.2, 0.9, 0.5, 0.05)
     area_threshold = st.slider("Area Threshold (%)", 1, 15, 8, 1)
-    st.info("Using YOLOv8s pretrained model on COCO dataset.")
+    st.info("Model: YOLOv8s pretrained on COCO dataset.")
     st.caption("Detects: car, motorcycle, bus, truck")
 
 vehicle_classes = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
-# -----------------------------------------------
+# ---------------------------------------------------
 # DATA BUFFERS
-# -----------------------------------------------
+# ---------------------------------------------------
 ratios = deque(maxlen=10)
 vehicle_counts = deque(maxlen=10)
 motions = deque(maxlen=10)
 prev_positions = {}
 
-# -----------------------------------------------
+# ---------------------------------------------------
 # ANALYSIS FUNCTION
-# -----------------------------------------------
+# ---------------------------------------------------
 def analyze_flow(frame):
     global prev_positions
     results = model.track(frame, conf=conf_threshold, persist=True, verbose=False, classes=list(vehicle_classes.keys()))
@@ -84,13 +83,13 @@ def analyze_flow(frame):
     avg_count = np.mean(vehicle_counts)
     avg_motion = np.mean(motions)
 
-    # Determine traffic condition
+    # Traffic condition
     if avg_motion > 8 and avg_ratio < 0.08:
         status, color = "🟢 FREE FLOW", (0, 255, 0)
     elif avg_motion > 3 or avg_ratio < 0.15:
         status, color = "🟡 MODERATE", (0, 255, 255)
     else:
-        status, color = "🔴 STUCK / HEAVY", (0, 0, 255)
+        status, color = "🔴 HEAVY", (0, 0, 255)
 
     annotated = results[0].plot()
     cv2.putText(
@@ -105,25 +104,29 @@ def analyze_flow(frame):
     )
     return annotated, status, avg_ratio * 100, avg_count, avg_motion
 
-# -----------------------------------------------
-# MAIN CAMERA STREAM
-# -----------------------------------------------
+# ---------------------------------------------------
+# MAIN CAMERA SECTION
+# ---------------------------------------------------
+st.markdown("### 📸 Capture a Frame for Detection")
+camera_image = st.camera_input("Click below to capture a live frame")
+
+# ---------------------------------------------------
+# ANALYSIS RESULT
+# ---------------------------------------------------
 main_col, analytics_col = st.columns([3, 1])
 
-st.markdown("### 📷 Capture a Frame or Stream from Your Webcam")
-
-camera_image = st.camera_input("Click below to capture a frame")
-
-if camera_image is not None:
+if camera_image:
     img = Image.open(camera_image)
     frame = np.array(img)
     annotated, status, ratio, count, motion = analyze_flow(frame)
 
     with main_col:
-        st.image(annotated, use_column_width=True)
+        st.image(annotated, use_column_width=True, caption="Detection Result")
 
     with analytics_col:
-        st.metric("Traffic", status)
-        st.metric("Vehicles", int(count))
+        st.metric("Traffic Status", status)
+        st.metric("Vehicle Count", int(count))
         st.metric("Coverage (%)", f"{ratio:.2f}")
         st.metric("Motion", f"{motion:.2f}")
+else:
+    st.info("👆 Use the camera above to capture a frame and start detection.")
