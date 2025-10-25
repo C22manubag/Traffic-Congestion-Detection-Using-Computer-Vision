@@ -35,6 +35,12 @@ with st.sidebar:
 vehicle_classes = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
 # -----------------------------------------------
+# SESSION STATE SETUP
+# -----------------------------------------------
+if "run_camera" not in st.session_state:
+    st.session_state.run_camera = False
+
+# -----------------------------------------------
 # DATA BUFFERS
 # -----------------------------------------------
 ratios = deque(maxlen=10)
@@ -105,67 +111,69 @@ def analyze_flow(frame):
     return annotated, status, avg_ratio * 100, avg_count, avg_motion
 
 # -----------------------------------------------
-# MAIN STREAM HANDLER (WORKING LOCAL CAMERA)
+# MAIN STREAM HANDLER
 # -----------------------------------------------
 main_col, analytics_col = st.columns([3, 1])
-start_btn = st.button("▶️ Start Live Stream")
 
-if start_btn:
-    st.info("Starting live webcam... press **Stop** to end.")
-    frame_placeholder = main_col.empty()
+if not st.session_state.run_camera:
+    if st.button("▶️ Start Live Stream"):
+        st.session_state.run_camera = True
+        st.experimental_rerun()
+else:
     stop_btn = st.button("⏹ Stop Stream")
+    frame_placeholder = main_col.empty()
 
-    cap = cv2.VideoCapture(0)  # 0 = default webcam
-
+    cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         st.error("🚫 Cannot access camera. Try a different index (1, 2) or check permissions.")
-    else:
-        timeline, motion_data, density_data, count_data = [], [], [], []
-        start_time = time.time()
+        st.session_state.run_camera = False
+        st.stop()
 
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                st.warning("⚠️ No camera frame detected.")
-                break
+    timeline, motion_data, density_data, count_data = [], [], [], []
+    start_time = time.time()
 
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            annotated, status, ratio, count, motion = analyze_flow(frame)
+    while st.session_state.run_camera:
+        ret, frame = cap.read()
+        if not ret:
+            st.warning("⚠️ No camera frame detected.")
+            break
 
-            # Display live frame
-            frame_placeholder.image(annotated, channels="RGB", use_column_width=True)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        annotated, status, ratio, count, motion = analyze_flow(frame)
 
-            # Record metrics
-            timeline.append(time.time() - start_time)
-            motion_data.append(motion)
-            density_data.append(ratio)
-            count_data.append(count)
+        # Display live frame
+        frame_placeholder.image(annotated, channels="RGB", use_column_width=True)
 
-            with analytics_col:
-                st.metric("Status", status)
-                st.metric("Vehicles", int(count))
-                st.metric("Area (%)", f"{ratio:.2f}")
-                st.metric("Motion", f"{motion:.2f}")
+        # Record metrics
+        timeline.append(time.time() - start_time)
+        motion_data.append(motion)
+        density_data.append(ratio)
+        count_data.append(count)
 
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=timeline, y=density_data, mode="lines", name="Density"))
-                fig.add_trace(go.Scatter(x=timeline, y=motion_data, mode="lines", name="Motion"))
-                fig.add_trace(go.Scatter(x=timeline, y=count_data, mode="lines", name="Vehicles"))
-                fig.update_layout(
-                    title="📈 Live Traffic Metrics",
-                    xaxis_title="Time (s)",
-                    yaxis_title="Value",
-                    height=250,
-                    margin=dict(l=10, r=10, t=30, b=10),
-                    showlegend=True,
-                )
-                st.plotly_chart(fig, use_container_width=True)
+        with analytics_col:
+            st.metric("Status", status)
+            st.metric("Vehicles", int(count))
+            st.metric("Area (%)", f"{ratio:.2f}")
+            st.metric("Motion", f"{motion:.2f}")
 
-            # Break loop if Stop button pressed
-            if stop_btn:
-                st.success("✅ Stream stopped.")
-                break
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=timeline, y=density_data, mode="lines", name="Density"))
+            fig.add_trace(go.Scatter(x=timeline, y=motion_data, mode="lines", name="Motion"))
+            fig.add_trace(go.Scatter(x=timeline, y=count_data, mode="lines", name="Vehicles"))
+            fig.update_layout(
+                title="📈 Live Traffic Metrics",
+                xaxis_title="Time (s)",
+                yaxis_title="Value",
+                height=250,
+                margin=dict(l=10, r=10, t=30, b=10),
+                showlegend=True,
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-        cap.release()
+        # Handle Stop button
+        if stop_btn:
+            st.session_state.run_camera = False
+            st.success("✅ Stream stopped.")
+            st.experimental_rerun()
 
-
+    cap.release()
