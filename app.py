@@ -25,17 +25,27 @@ model = load_model()
 # -------------------------------------------------
 # SIDEBAR SETTINGS
 # -------------------------------------------------
-conf_threshold = st.sidebar.slider("Confidence Threshold", 0.25, 0.9, 0.5)
+conf_threshold = st.sidebar.slider(
+    "Confidence Threshold", 
+    0.25, 
+    0.9, 
+    0.5, 
+    key="conf_slider"
+)
 st.sidebar.info("Detects vehicles: car, motorcycle, bus, truck")
 
-uploaded_video = st.file_uploader("📹 Upload a Traffic Video", type=["mp4", "mov", "avi"])
+uploaded_video = st.file_uploader(
+    "📹 Upload a Traffic Video", 
+    type=["mp4", "mov", "avi"], 
+    key="video_upload"
+)
 
 if uploaded_video is not None:
     # Save the uploaded video to a temp file
     tfile = tempfile.NamedTemporaryFile(delete=False)
     tfile.write(uploaded_video.read())
 
-    # Display the uploaded video
+    # Display uploaded video
     st.video(tfile.name)
     st.info("⏳ Running detection... Please wait while analyzing frames.")
 
@@ -99,16 +109,17 @@ if uploaded_video is not None:
         timestamps.append(time.time() - start_time)
         progress.progress(frame_idx / frame_count)
 
-        # Smooth display every few frames (not all to avoid lag)
+        # Display frame occasionally to avoid freezing
         if frame_idx % int(fps / 3) == 0:
             st.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), use_container_width=True)
 
-        # Control speed
+        # Slight delay for sync
         time.sleep(frame_interval / 2)
 
     cap.release()
     progress.empty()
     st.success("✅ Video analysis complete!")
+
 
     # -------------------------------------------------
     # SUMMARY
@@ -270,4 +281,5 @@ if uploaded_video:
     st.plotly_chart(fig, use_container_width=True)
 else:
     st.info("📂 Please upload a video to start analysis.")
+
 
