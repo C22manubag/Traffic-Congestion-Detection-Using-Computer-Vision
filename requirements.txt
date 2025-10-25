@@ -1,5 +1,6 @@
 streamlit
-ultralytics
+ultralytics==8.2.103
 opencv-python-headless
 plotly
 numpy
+torch
