@@ -9,9 +9,9 @@ import plotly.graph_objects as go
 # ------------------------------------------------------------
 # PAGE CONFIG
 # ------------------------------------------------------------
-st.set_page_config(page_title="🚦 YOLOv8 Traffic Video Analyzer", layout="wide")
-st.title("🚦 YOLOv8 Traffic Flow Analyzer (Video Upload)")
-st.caption("Upload a traffic video to simulate real-time YOLO detection and analyze flow confidence.")
+st.set_page_config(page_title="🚦 YOLOv8 Traffic Flow Analyzer", layout="wide")
+st.title("🚦 YOLOv8 Traffic Flow Analyzer (Smooth Playback)")
+st.caption("Upload a traffic video to analyze flow and confidence in near real-time.")
 
 # ------------------------------------------------------------
 # LOAD MODEL
@@ -23,48 +23,47 @@ def load_model():
 model = load_model()
 
 # ------------------------------------------------------------
-# SIDEBAR SETTINGS
+# SETTINGS
 # ------------------------------------------------------------
 conf_threshold = st.sidebar.slider("Confidence Threshold", 0.25, 0.9, 0.5)
-st.sidebar.info("Model detects: car, motorcycle, bus, truck")
+st.sidebar.info("YOLOv8n pretrained model detects: car, motorcycle, bus, truck")
 
-# ------------------------------------------------------------
-# FILE UPLOAD
-# ------------------------------------------------------------
 uploaded_video = st.file_uploader("📹 Upload a Traffic Video", type=["mp4", "mov", "avi"])
+FRAME_WINDOW = st.empty()
+status_box = st.empty()
 
-FRAME_WINDOW = st.image([])
-status_placeholder = st.empty()
-progress = st.progress(0)
-
-if uploaded_video is not None:
-    # Save temp file
+if uploaded_video:
+    # Save temp video
     tfile = tempfile.NamedTemporaryFile(delete=False)
     tfile.write(uploaded_video.read())
     cap = cv2.VideoCapture(tfile.name)
 
-    # Initialize analysis lists
-    conf_data, closeness_data, count_data, timeline = [], [], [], []
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    # Get video info
     fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    frame_interval = 1 / fps
+    frame_delay = 1 / fps
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    progress = st.progress(0)
+
+    # Tracking metrics
+    conf_data, closeness_data, count_data, timeline = [], [], [], []
     start_time = time.time()
-
-    st.info("🔍 Analyzing video frame-by-frame... Please wait or stop anytime.")
     frame_idx = 0
+    st.info("⏳ Running analysis — please wait...")
 
+    # Process frames
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Resize for faster processing
         frame = cv2.resize(frame, (640, 360))
         results = model(frame, conf=conf_threshold)
         boxes = results[0].boxes
         annotated = results[0].plot()
 
-        # Traffic metrics
+        # --- Analysis logic ---
         vehicle_classes = [2, 3, 5, 7]
         count, total_conf = 0, 0
         for box in boxes:
@@ -75,9 +74,7 @@ if uploaded_video is not None:
                 total_conf += conf
 
         avg_conf = (total_conf / count) if count > 0 else 0
-        closeness = min(100, count * 15 + (1 - avg_conf) * 50)  # heuristic closeness score
-
-        # Determine status
+        closeness = min(100, count * 15 + (1 - avg_conf) * 50)
         status = "🟢 Free Flow" if closeness < 50 else "🔴 Traffic"
         color = (0, 255, 0) if status == "🟢 Free Flow" else (0, 0, 255)
 
@@ -92,39 +89,37 @@ if uploaded_video is not None:
             cv2.LINE_AA,
         )
 
-        # Append stats
+        # --- Stream frame smoothly ---
+        FRAME_WINDOW.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB), channels="RGB", use_column_width=True)
+        status_box.markdown(f"**{status}** — Vehicles: `{count}`, Confidence: `{avg_conf:.2f}`, Closeness: `{closeness:.1f}%`")
+
+        # Collect data
+        frame_idx += 1
         conf_data.append(avg_conf)
         closeness_data.append(closeness)
         count_data.append(count)
         timeline.append(time.time() - start_time)
+        progress.progress(min(frame_idx / frame_count, 1.0))
 
-        # Show frame (simulate live playback)
-        FRAME_WINDOW.image(cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB))
-        status_placeholder.write(f"**{status}** | Confidence: `{avg_conf:.2f}` | Vehicles: `{count}` | Closeness: `{closeness:.1f}%`")
-        progress.progress(frame_idx / frame_count)
-
-        frame_idx += 1
-        time.sleep(0.03)  # simulate playback speed
+        # Sleep to maintain playback FPS
+        time.sleep(frame_delay)
 
     cap.release()
     progress.empty()
     st.success("✅ Video analysis complete!")
 
     # ------------------------------------------------------------
-    # SUMMARY STATS
+    # SUMMARY + VISUALS
     # ------------------------------------------------------------
-    st.subheader("📈 Statistical Summary")
+    st.subheader("📈 Analysis Summary")
     col1, col2, col3 = st.columns(3)
     col1.metric("Average Confidence", f"{np.mean(conf_data)*100:.2f}%")
     col2.metric("Average Closeness", f"{np.mean(closeness_data):.1f}%")
     col3.metric("Average Vehicle Count", f"{np.mean(count_data):.1f}")
 
-    # ------------------------------------------------------------
-    # PLOTS
-    # ------------------------------------------------------------
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=timeline, y=[c*100 for c in conf_data], mode="lines", name="Confidence (%)"))
-    fig.add_trace(go.Scatter(x=timeline, y=closeness_data, mode="lines", name="Closeness to Traffic (%)"))
+    fig.add_trace(go.Scatter(x=timeline, y=closeness_data, mode="lines", name="Closeness (%)"))
     fig.update_layout(
         title="📊 Confidence & Traffic Closeness Over Time",
         xaxis_title="Time (s)",
@@ -133,6 +128,5 @@ if uploaded_video is not None:
         showlegend=True,
     )
     st.plotly_chart(fig, use_container_width=True)
-
 else:
     st.info("📂 Please upload a video to start analysis.")
