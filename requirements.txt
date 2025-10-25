@@ -1,4 +1,5 @@
-streamlit>=1.38.0
-opencv-python-headless>=4.9.0.80
-numpy
+streamlit
+ultralytics
+opencv-python-headless
 plotly
+numpy
