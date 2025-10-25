@@ -19,7 +19,7 @@ st.set_page_config(
 
 st.title("🚦 Smart Traffic Flow Analyzer")
 st.markdown(
-    "Analyze live or recorded traffic footage using **computer vision** to detect congestion levels — "
+    "Analyze **live** or recorded traffic footage using computer vision to detect congestion: "
     "**Free Flow**, **Moderate**, or **Stuck**."
 )
 
@@ -29,7 +29,7 @@ st.markdown(
 MODEL_PATH = "yolov8s.pt"
 
 def ensure_model():
-    """Ensure YOLO model exists locally before loading."""
+    """Ensure YOLO model exists locally."""
     if not os.path.exists(MODEL_PATH) or os.path.getsize(MODEL_PATH) < 5_000_000:
         st.warning("Downloading YOLOv8s model... Please wait ⏳")
         url = "https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8s.pt"
@@ -52,7 +52,6 @@ model = load_model()
 with st.sidebar:
     st.header("⚙️ Configuration")
 
-    # Properly aligned and smaller layout
     st.markdown(
         """
         <style>
@@ -80,17 +79,16 @@ with st.sidebar:
 vehicle_classes = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
 
 # ----------------------------------------------------
-# 📊 LAYOUT: MAIN + ANALYTICS COLUMN
+# 📊 LAYOUT
 # ----------------------------------------------------
 main_col, analytics_col = st.columns([3, 1])
-
 ratios = deque(maxlen=10)
 vehicle_counts = deque(maxlen=10)
 motions = deque(maxlen=10)
 prev_positions = {}
 
 # ----------------------------------------------------
-# 🧠 CORE ANALYSIS FUNCTION
+# 🧠 ANALYSIS FUNCTION
 # ----------------------------------------------------
 def analyze_flow(frame):
     global prev_positions
@@ -112,81 +110,93 @@ def analyze_flow(frame):
             x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
             cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
             vid = int(box.id.cpu().numpy())
-
             current_positions[vid] = (cx, cy)
             vehicle_count += 1
             vehicle_area += (x2 - x1) * (y2 - y1)
-
             if vid in prev_positions:
                 px, py = prev_positions[vid]
-                dist = np.sqrt((cx - px) ** 2 + (cy - py) ** 2)
-                movements.append(dist)
+                movements.append(np.sqrt((cx - px)**2 + (cy - py)**2))
 
     prev_positions = current_positions
     avg_move = np.mean(movements) if movements else 0
     area_ratio = vehicle_area / (height * width)
-
     ratios.append(area_ratio)
     vehicle_counts.append(vehicle_count)
     motions.append(avg_move)
+    avg_ratio, avg_count, avg_motion = np.mean(ratios), np.mean(vehicle_counts), np.mean(motions)
 
-    avg_ratio = np.mean(ratios)
-    avg_count = np.mean(vehicle_counts)
-    avg_motion = np.mean(motions)
-
-    # Logic
     if avg_motion > 8 and avg_ratio < 0.08:
-        status = "🟢 FREE FLOW"
-        color = (0, 255, 0)
+        status, color = "🟢 FREE FLOW", (0, 255, 0)
     elif avg_motion > 3 or avg_ratio < 0.15:
-        status = "🟡 MODERATE"
-        color = (0, 255, 255)
+        status, color = "🟡 MODERATE", (0, 255, 255)
     else:
-        status = "🔴 STUCK / HEAVY"
-        color = (0, 0, 255)
+        status, color = "🔴 STUCK / HEAVY", (0, 0, 255)
 
     annotated = results[0].plot()
     cv2.putText(
         annotated,
         f"{status} | Move:{avg_motion:.1f} | Veh:{int(avg_count)} | {avg_ratio*100:.1f}%",
-        (20, 50),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.9,
-        color,
-        2,
-        cv2.LINE_AA
+        (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2, cv2.LINE_AA
     )
     return annotated, status, avg_ratio * 100, avg_count, avg_motion
 
-
 # ----------------------------------------------------
-# 🖼️ INPUT HANDLING
+# 📹 INPUT HANDLING
 # ----------------------------------------------------
-if input_type == "🖼️ Upload Image":
-    uploaded = st.file_uploader("Upload road image", type=["jpg", "jpeg", "png"])
-    if uploaded:
-        img = Image.open(uploaded)
-        frame = np.array(img)
-        annotated, status, ratio, count, motion = analyze_flow(frame)
+if input_type == "📷 Live Camera":
+    st.subheader("Live Camera Mode (Local Only)")
+    run = st.checkbox("Start Live Feed")
+    FRAME_WINDOW = main_col.image([])
 
-        with main_col:
-            st.image(annotated, use_column_width=True)
+    if run:
+        cap = cv2.VideoCapture(0)
+        timeline, motion_data, density_data, count_data = [], [], [], []
+        start = time.time()
 
-        with analytics_col:
-            st.metric("Traffic", status)
-            st.metric("Vehicles", int(count))
-            st.metric("Coverage (%)", f"{ratio:.1f}")
-            st.metric("Motion", f"{motion:.2f}")
-            st.info("📷 Static image analysis only")
+        while run and cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            annotated, status, ratio, count, motion = analyze_flow(frame)
+            FRAME_WINDOW.image(annotated, channels="RGB", use_column_width=True)
+
+            timeline.append(time.time() - start)
+            motion_data.append(motion)
+            density_data.append(ratio)
+            count_data.append(count)
+
+            with analytics_col:
+                st.metric("Status", status)
+                st.metric("Vehicles", int(count))
+                st.metric("Coverage (%)", f"{ratio:.1f}")
+                st.metric("Motion", f"{motion:.2f}")
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=timeline, y=density_data, mode="lines", name="Area %"))
+                fig.add_trace(go.Scatter(x=timeline, y=motion_data, mode="lines", name="Motion"))
+                fig.add_trace(go.Scatter(x=timeline, y=count_data, mode="lines", name="Vehicles"))
+                fig.update_layout(
+                    title="📈 Live Metrics",
+                    xaxis_title="Time (s)", yaxis_title="Value",
+                    height=250, margin=dict(l=10, r=10, t=30, b=10), showlegend=True
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            # Short delay for performance
+            time.sleep(0.03)
+
+        cap.release()
+        st.success("✅ Live camera stopped.")
 
 elif input_type == "🎞️ Upload Video":
-    video = st.file_uploader("Upload road video", type=["mp4", "avi", "mov"])
+    st.subheader("Upload Video File")
+    video = st.file_uploader("Upload a traffic video", type=["mp4", "avi", "mov"])
     if video:
         tfile = tempfile.NamedTemporaryFile(delete=False)
         tfile.write(video.read())
         cap = cv2.VideoCapture(tfile.name)
         frame_placeholder = main_col.empty()
-
         timeline, motion_data, density_data, count_data = [], [], [], []
         start = time.time()
 
@@ -197,47 +207,24 @@ elif input_type == "🎞️ Upload Video":
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             annotated, status, ratio, count, motion = analyze_flow(frame)
             frame_placeholder.image(annotated, channels="RGB", use_column_width=True)
-
             timeline.append(time.time() - start)
             motion_data.append(motion)
             density_data.append(ratio)
             count_data.append(count)
-
-            with analytics_col:
-                st.metric("Status", status)
-                st.metric("Vehicles", int(count))
-                st.metric("Area (%)", f"{ratio:.2f}")
-                st.metric("Motion", f"{motion:.2f}")
-
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=timeline, y=density_data, mode="lines", name="Area %"))
-                fig.add_trace(go.Scatter(x=timeline, y=motion_data, mode="lines", name="Motion"))
-                fig.add_trace(go.Scatter(x=timeline, y=count_data, mode="lines", name="Vehicles"))
-                fig.update_layout(
-                    title="📈 Live Traffic Metrics",
-                    xaxis_title="Time (s)",
-                    yaxis_title="Value",
-                    height=250,
-                    margin=dict(l=10, r=10, t=30, b=10),
-                    showlegend=True
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
         cap.release()
         with analytics_col:
-            st.success(f"Final Condition: {status}")
+            st.success(f"Final Status: {status}")
 
-elif input_type == "📷 Live Camera":
-    st.write("### Live Camera Mode")
-    camera_input = st.camera_input("Capture a frame")
-    if camera_input:
-        img = Image.open(camera_input)
+elif input_type == "🖼️ Upload Image":
+    st.subheader("Upload Static Image")
+    uploaded = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+    if uploaded:
+        img = Image.open(uploaded)
         frame = np.array(img)
         annotated, status, ratio, count, motion = analyze_flow(frame)
-        with main_col:
-            st.image(annotated, use_column_width=True)
+        main_col.image(annotated, use_column_width=True)
         with analytics_col:
             st.metric("Traffic", status)
             st.metric("Vehicles", int(count))
-            st.metric("Coverage (%)", f"{ratio:.2f}")
+            st.metric("Coverage (%)", f"{ratio:.1f}")
             st.metric("Motion", f"{motion:.2f}")
