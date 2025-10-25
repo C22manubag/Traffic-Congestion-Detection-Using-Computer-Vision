@@ -131,7 +131,7 @@ if mode == "📷 Webcam Capture":
         annotated, status, conf, ratio, count, motion, closeness = analyze_flow(frame)
 
         with col1:
-            st.image(annotated, use_column_width=True)
+            st.image(annotated, use_container_width=True)
 
         results_placeholder.markdown(f"### Current Result: {status}")
         stats_placeholder.write(
@@ -200,3 +200,4 @@ else:
                 showlegend=True,
             )
             st.plotly_chart(fig, use_container_width=True)
+
